@@ -1,0 +1,870 @@
+#!/bin/bash
+
+# gdoctor - Git Profile Doctor (Enhanced Service Edition)
+# A comprehensive tool to manage multiple Git profiles with automatic switching
+
+set -euo pipefail  # Exit on error, undefined vars, pipe failures
+
+# Version
+readonly VERSION="2.1.0"
+readonly BUILD_DATE="2025-06-27"
+
+# Configuration
+CONFIG_FILE="$HOME/.gitprofiles"
+CURRENT_PROFILE_FILE="$HOME/.current_gitprofile"
+SERVICE_CONFIG_FILE="$HOME/.gdoctor_service"
+LOG_FILE="$HOME/.gdoctor.log"
+
+# Colors
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[0;33m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m' # No color
+
+# Function to display messages with colors
+colored_message() {
+    local color="$1"
+    local message="$2"
+    echo -e "${color}${message}${NC}"
+}
+
+# Function to log messages
+log_message() {
+    local level="$1"
+    local message="$2"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [$level] $message" >> "$LOG_FILE"
+}
+
+# Function to check if config file exists
+check_config_file() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        colored_message "$RED" "Error: Configuration file '$CONFIG_FILE' not found."
+        colored_message "$YELLOW" "Run 'gdoctor init' to initialize profiles."
+        exit 1
+    fi
+}
+
+# Function to display version information
+show_version() {
+    cat << EOF
+gdoctor - Git Profile Doctor
+Version: $VERSION
+Build Date: $BUILD_DATE
+Platform: $(uname -s) $(uname -m)
+EOF
+}
+
+# Function to display help
+show_help() {
+    cat << 'EOF'
+gdoctor - Git Profile Doctor 
+
+USAGE:
+    gdoctor <command> [arguments]
+
+BASIC COMMANDS:
+    current             Show the current active profile
+    help                Show this help message
+    init                Initialize git profiles from current git config
+    list                List all available profiles
+    listall             Display all Git configuration settings
+    switch <profile>    Switch to the specified profile
+    validate            Validate if the current profile matches the repository
+    version             Show version and system information
+    uninstall           Complete uninstallation of gdoctor
+
+SERVICE COMMANDS:
+    --install-hooks       Install git hooks for automatic validation
+    --uninstall-hooks     Remove git hooks
+    --install-shell       Install shell integration for auto-switching
+    --uninstall-shell     Remove shell integration
+    --daemon              Run as background service
+    --stop-daemon         Stop background service
+    --auto-switch         Auto-switch profile based on current directory
+    --status              Show service status
+
+EXAMPLES:
+    gdoctor init                      # Initialize profiles
+    gdoctor --install-shell           # Enable automatic profile switching
+    gdoctor --install-hooks           # Enable git hook validation
+    gdoctor --daemon                  # Run as background service
+    gdoctor --auto-switch             # Auto-switch for current directory
+    gdoctor uninstall                 # Complete uninstallation
+
+PROFILE FORMAT:
+    Profiles are stored in ~/.gitprofiles in INI format:
+    
+    [work]
+    name=John Doe
+    email=john.doe@company.com
+    server=github.company.com
+    
+    [personal]
+    name=John Doe
+    email=john@personal.com
+    server=github.com
+
+EOF
+}
+
+# Helper function to get profile values
+get_profile_value() {
+    local profile="$1"
+    local key="$2"
+    
+    # Find the profile section and get the value
+    python3 -c "
+import sys, re
+profile = sys.argv[1]
+key = sys.argv[2]
+
+with open('$CONFIG_FILE', 'r') as f:
+    content = f.read()
+
+# Find the profile section
+pattern = r'\[' + re.escape(profile) + r'\](.*?)(?=\[|\Z)'
+match = re.search(pattern, content, re.DOTALL)
+if match:
+    section = match.group(1)
+    # Find the key in this section
+    key_pattern = r'^\s*' + re.escape(key) + r'\s*=\s*(.*)$'
+    key_match = re.search(key_pattern, section, re.MULTILINE)
+    if key_match:
+        print(key_match.group(1).strip())
+" "$profile" "$key" 2>/dev/null || echo ""
+}
+
+# Function to list valid profiles
+list_profiles() {
+    check_config_file
+    
+    colored_message "$BLUE" "Available profiles:"
+    echo
+    
+    local profiles
+    profiles=$(grep "^\[" "$CONFIG_FILE" | sed 's/[][]//g')
+    
+    if [[ -z "$profiles" ]]; then
+        colored_message "$YELLOW" "No profiles found in $CONFIG_FILE"
+        return 0
+    fi
+    
+    while IFS= read -r profile; do
+        local name email server
+        name=$(get_profile_value "$profile" "name")
+        email=$(get_profile_value "$profile" "email")
+        server=$(get_profile_value "$profile" "server")
+        
+        printf "  %-15s %s <%s>" "$profile" "$name" "$email"
+        [[ -n "$server" ]] && printf " [%s]" "$server"
+        echo
+    done <<< "$profiles"
+}
+
+# Function to switch profiles
+switch_profile() {
+    local profile="$1"
+    local silent="${2:-false}"
+    
+    check_config_file
+    
+    # Validate profile exists
+    if ! grep -q "^\[$profile\]$" "$CONFIG_FILE"; then
+        if [[ "$silent" != "true" ]]; then
+            colored_message "$RED" "Error: Profile '$profile' not found."
+            colored_message "$YELLOW" "Available profiles:"
+            list_profiles
+        fi
+        return 1
+    fi
+    
+    local name email
+    name=$(get_profile_value "$profile" "name")
+    email=$(get_profile_value "$profile" "email")
+
+    if [[ -z "$name" ]] || [[ -z "$email" ]]; then
+        if [[ "$silent" != "true" ]]; then
+            colored_message "$RED" "Error: Profile '$profile' is incomplete (missing name or email)."
+        fi
+        return 1
+    fi
+
+    # Apply git configuration
+    if ! git config --global user.name "$name" || ! git config --global user.email "$email"; then
+        if [[ "$silent" != "true" ]]; then
+            colored_message "$RED" "Error: Failed to update git configuration."
+        fi
+        return 1
+    fi
+
+    # Save current profile
+    echo "$profile" > "$CURRENT_PROFILE_FILE"
+    log_message "INFO" "Switched to profile: $profile ($name <$email>)"
+    
+    if [[ "$silent" != "true" ]]; then
+        colored_message "$GREEN" "✓ Switched to profile: $profile"
+        colored_message "$GREEN" "  Name:  $name"
+        colored_message "$GREEN" "  Email: $email"
+    fi
+    
+    return 0
+}
+
+# Function to show the current active profile
+show_current_profile() {
+    if [[ ! -f "$CURRENT_PROFILE_FILE" ]]; then
+        colored_message "$RED" "Error: No profile is currently selected."
+        colored_message "$YELLOW" "Use 'gdoctor --switch <profile>' to set one."
+        exit 1
+    fi
+
+    local current_profile
+    current_profile=$(cat "$CURRENT_PROFILE_FILE")
+    
+    if [[ -z "$current_profile" ]]; then
+        colored_message "$RED" "Error: Current profile file is empty."
+        exit 1
+    fi
+    
+    check_config_file
+    
+    # Verify profile still exists in config
+    if ! grep -q "^\[$current_profile\]$" "$CONFIG_FILE"; then
+        colored_message "$RED" "Error: Current profile '$current_profile' no longer exists in config."
+        colored_message "$YELLOW" "Use 'gdoctor --switch <profile>' to set a valid one."
+        exit 1
+    fi
+    
+    local name email server
+    name=$(get_profile_value "$current_profile" "name")
+    email=$(get_profile_value "$current_profile" "email")
+    server=$(get_profile_value "$current_profile" "server")
+    
+    colored_message "$GREEN" "Current profile: $current_profile"
+    echo "  Name:   $name"
+    echo "  Email:  $email"
+    [[ -n "$server" ]] && echo "  Server: $server"
+}
+
+# Function to initialize profiles
+init_profiles() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        colored_message "$RED" "Error: Profiles already initialized at $CONFIG_FILE"
+        colored_message "$YELLOW" "Use 'gdoctor --list' to see existing profiles."
+        exit 1
+    fi
+
+    # Check if git is configured
+    if ! git config --global user.name >/dev/null 2>&1 || ! git config --global user.email >/dev/null 2>&1; then
+        colored_message "$RED" "Error: Git user.name and user.email must be configured first."
+        colored_message "$YELLOW" "Run: git config --global user.name 'Your Name'"
+        colored_message "$YELLOW" "Run: git config --global user.email 'your.email@example.com'"
+        exit 1
+    fi
+
+    local name email
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+
+    # Create initial profile
+    cat > "$CONFIG_FILE" << EOF
+# Git Profiles Configuration
+# Format: [profile_name]
+#         name=Full Name
+#         email=email@example.com
+#         server=hostname (optional, for URL validation)
+
+[default]
+name=$name
+email=$email
+server=github.com
+EOF
+
+    # Set default as current profile
+    echo "default" > "$CURRENT_PROFILE_FILE"
+    
+    # Initialize service config
+    cat > "$SERVICE_CONFIG_FILE" << EOF
+# GDoctor Service Configuration
+auto_switch=false
+hooks_enabled=false
+daemon_enabled=false
+shell_integration=false
+EOF
+
+    colored_message "$GREEN" "✓ Profiles initialized successfully!"
+    colored_message "$GREEN" "  Config file: $CONFIG_FILE"
+    colored_message "$GREEN" "  Service config: $SERVICE_CONFIG_FILE"
+    colored_message "$GREEN" "  Default profile created with current git settings"
+    colored_message "$YELLOW" "Edit $CONFIG_FILE to add more profiles."
+    log_message "INFO" "Profiles initialized with default profile"
+}
+
+# Function to auto-switch profile based on repository
+auto_switch_profile() {
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        return 0  # Not in a git repo, nothing to do
+    fi
+
+    # Get remote URLs
+    local remotes
+    remotes=$(git remote -v 2>/dev/null | grep -E "(fetch|push)" | head -1)
+    
+    if [[ -z "$remotes" ]]; then
+        return 0  # No remotes, nothing to do
+    fi
+
+    # Extract URL from remote output
+    local remote_url
+    remote_url=$(echo "$remotes" | awk '{print $2}')
+    
+    if [[ -z "$remote_url" ]]; then
+        return 0
+    fi
+
+    # Find the correct profile for this repository
+    local correct_profile=""
+    local profiles
+    profiles=$(grep "^\[" "$CONFIG_FILE" | sed 's/[][]//g' 2>/dev/null || true)
+    
+    if [[ -n "$profiles" ]]; then
+        while IFS= read -r profile; do
+            local server
+            server=$(get_profile_value "$profile" "server")
+            if [[ -n "$server" && "$remote_url" == *"$server"* ]]; then
+                correct_profile="$profile"
+                break
+            fi
+        done <<< "$profiles"
+    fi
+
+    # Check if we need to switch
+    local current_profile=""
+    if [[ -f "$CURRENT_PROFILE_FILE" ]]; then
+        current_profile=$(cat "$CURRENT_PROFILE_FILE")
+    fi
+
+    if [[ -n "$correct_profile" && "$current_profile" != "$correct_profile" ]]; then
+        if switch_profile "$correct_profile" "true"; then
+            colored_message "$BLUE" "🔄 Auto-switched to profile: $correct_profile"
+            colored_message "$BLUE" "  Repository: $remote_url"
+            log_message "INFO" "Auto-switched to profile $correct_profile for repository $remote_url"
+        fi
+    fi
+}
+
+# Function to install git hooks
+install_git_hooks() {
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        colored_message "$RED" "Error: Not in a git repository."
+        colored_message "$YELLOW" "Run this command from within a git repository."
+        exit 1
+    fi
+
+    local git_dir
+    git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+
+    # Create pre-commit hook
+    cat > "$hooks_dir/pre-commit" << 'EOF'
+#!/bin/bash
+# GDoctor pre-commit hook - Validate git profile
+
+if command -v gdoctor &> /dev/null; then
+    if ! gdoctor --validate; then
+        echo "❌ Git profile validation failed!"
+        echo "Use 'gdoctor --auto-switch' to fix this, or switch manually."
+        exit 1
+    fi
+fi
+EOF
+
+    chmod +x "$hooks_dir/pre-commit"
+    colored_message "$GREEN" "✓ Git hooks installed successfully!"
+    colored_message "$GREEN" "  Pre-commit hook will validate profiles before commits"
+    log_message "INFO" "Git hooks installed in $(pwd)"
+}
+
+# Function to uninstall git hooks
+uninstall_git_hooks() {
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        colored_message "$RED" "Error: Not in a git repository."
+        exit 1
+    fi
+
+    local git_dir
+    git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+
+    if [[ -f "$hooks_dir/pre-commit" ]]; then
+        # Check if it's our hook
+        if grep -q "GDoctor pre-commit hook" "$hooks_dir/pre-commit" 2>/dev/null; then
+            rm "$hooks_dir/pre-commit"
+            colored_message "$GREEN" "✓ GDoctor git hooks removed"
+        else
+            colored_message "$YELLOW" "Warning: pre-commit hook exists but is not from GDoctor"
+            colored_message "$YELLOW" "Manual removal required"
+        fi
+    else
+        colored_message "$YELLOW" "No GDoctor git hooks found"
+    fi
+}
+
+# Function to install shell integration
+install_shell_integration() {
+    local shell_rc=""
+    
+    # Detect shell and set rc file
+    if [[ "$SHELL" == *"zsh"* ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]]; then
+        shell_rc="$HOME/.bashrc"
+    else
+        colored_message "$YELLOW" "Unknown shell. Please manually add the integration."
+        colored_message "$YELLOW" "Add this to your shell profile:"
+        echo
+        echo "# GDoctor auto-switch integration"
+        echo "gdoctor_auto_switch() {"
+        echo "    if command -v gdoctor &> /dev/null; then"
+        echo "        gdoctor --auto-switch"
+        echo "    fi"
+        echo "}"
+        echo "export PROMPT_COMMAND=\"gdoctor_auto_switch; \$PROMPT_COMMAND\""
+        return 0
+    fi
+
+    # Check if already installed
+    if grep -q "gdoctor_auto_switch" "$shell_rc" 2>/dev/null; then
+        colored_message "$YELLOW" "Shell integration already installed in $shell_rc"
+        return 0
+    fi
+
+    # Add integration
+    cat >> "$shell_rc" << 'EOF'
+
+# GDoctor auto-switch integration
+gdoctor_auto_switch() {
+    if command -v gdoctor &> /dev/null; then
+        gdoctor --auto-switch 2>/dev/null
+    fi
+}
+
+# Hook into directory changes (works for both bash and zsh)
+if [[ "$SHELL" == *"zsh"* ]]; then
+    chpwd_functions+=(gdoctor_auto_switch)
+else
+    export PROMPT_COMMAND="gdoctor_auto_switch; $PROMPT_COMMAND"
+fi
+EOF
+
+    colored_message "$GREEN" "✓ Shell integration installed in $shell_rc"
+    colored_message "$YELLOW" "Restart your shell or run: source $shell_rc"
+    log_message "INFO" "Shell integration installed"
+}
+
+# Function to uninstall shell integration
+uninstall_shell_integration() {
+    local shell_rc=""
+    
+    if [[ "$SHELL" == *"zsh"* ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]]; then
+        shell_rc="$HOME/.bashrc"
+    else
+        colored_message "$YELLOW" "Unknown shell. Please manually remove the integration."
+        return 0
+    fi
+
+    if [[ -f "$shell_rc" ]]; then
+        # Remove our integration block
+        sed -i.bak '/# GDoctor auto-switch integration/,/^$/d' "$shell_rc"
+        colored_message "$GREEN" "✓ Shell integration removed from $shell_rc"
+        colored_message "$YELLOW" "Restart your shell to complete removal"
+    else
+        colored_message "$YELLOW" "No shell integration found"
+    fi
+}
+
+# Function to completely uninstall gdoctor
+uninstall_gdoctor() {
+    colored_message "$BLUE" "Starting complete GDoctor uninstallation..."
+    echo
+    
+    local confirmation=""
+    colored_message "$YELLOW" "⚠️  This will remove ALL gdoctor data and configurations!"
+    colored_message "$YELLOW" "   - Configuration files (~/.gitprofiles, ~/.current_gitprofile)"
+    colored_message "$YELLOW" "   - Service configurations (~/.gdoctor_service)"
+    colored_message "$YELLOW" "   - Log files (~/.gdoctor.log)"
+    colored_message "$YELLOW" "   - Shell integrations"
+    colored_message "$YELLOW" "   - Git hooks (from current repository if any)"
+    echo
+    
+    read -p "Are you sure you want to proceed? (yes/no): " confirmation
+    
+    if [[ "$confirmation" != "yes" ]]; then
+        colored_message "$BLUE" "Uninstallation cancelled."
+        exit 0
+    fi
+    
+    echo
+    colored_message "$BLUE" "Proceeding with uninstallation..."
+    
+    # Stop any running service first
+    colored_message "$BLUE" "Checking for running services..."
+    
+    # Remove shell integration
+    colored_message "$BLUE" "Removing shell integration..."
+    uninstall_shell_integration 2>/dev/null || true
+    
+    # Remove git hooks from current repository if we're in one
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        colored_message "$BLUE" "Removing git hooks from current repository..."
+        uninstall_git_hooks 2>/dev/null || true
+    fi
+    
+    # Remove configuration files
+    colored_message "$BLUE" "Removing configuration files..."
+    if [[ -f "$CONFIG_FILE" ]]; then
+        rm -f "$CONFIG_FILE"
+        colored_message "$GREEN" "✓ Removed ~/.gitprofiles"
+    fi
+    
+    if [[ -f "$CURRENT_PROFILE_FILE" ]]; then
+        rm -f "$CURRENT_PROFILE_FILE"
+        colored_message "$GREEN" "✓ Removed ~/.current_gitprofile"
+    fi
+    
+    if [[ -f "$SERVICE_CONFIG_FILE" ]]; then
+        rm -f "$SERVICE_CONFIG_FILE"
+        colored_message "$GREEN" "✓ Removed ~/.gdoctor_service"
+    fi
+    
+    if [[ -f "$LOG_FILE" ]]; then
+        rm -f "$LOG_FILE"
+        colored_message "$GREEN" "✓ Removed ~/.gdoctor.log"
+    fi
+    
+    # Remove backup files
+    rm -f "${CONFIG_FILE}.bak" "${CURRENT_PROFILE_FILE}.bak" "${SERVICE_CONFIG_FILE}.bak" 2>/dev/null || true
+    
+    # Check for system-wide installations
+    colored_message "$BLUE" "Checking for system installations..."
+    
+    local install_locations=(
+        "/usr/local/bin/gdoctor"
+        "/usr/bin/gdoctor"
+        "$HOME/.local/bin/gdoctor"
+        "$HOME/bin/gdoctor"
+    )
+    
+    local found_installations=()
+    for location in "${install_locations[@]}"; do
+        if [[ -f "$location" ]] || [[ -L "$location" ]]; then
+            found_installations+=("$location")
+        fi
+    done
+    
+    if [[ ${#found_installations[@]} -gt 0 ]]; then
+        colored_message "$YELLOW" "Found gdoctor installations:"
+        for installation in "${found_installations[@]}"; do
+            echo "  - $installation"
+        done
+        echo
+        colored_message "$YELLOW" "To complete removal, manually delete these files:"
+        for installation in "${found_installations[@]}"; do
+            if [[ "$installation" == "/usr/local/bin/gdoctor" ]] || [[ "$installation" == "/usr/bin/gdoctor" ]]; then
+                colored_message "$YELLOW" "  sudo rm '$installation'"
+            else
+                colored_message "$YELLOW" "  rm '$installation'"
+            fi
+        done
+    fi
+    
+    # Check for macOS LaunchAgent
+    local plist_file="$HOME/Library/LaunchAgents/com.gdoctor.service.plist"
+    if [[ -f "$plist_file" ]]; then
+        colored_message "$YELLOW" "Found macOS LaunchAgent. To remove:"
+        colored_message "$YELLOW" "  launchctl unload '$plist_file'"
+        colored_message "$YELLOW" "  rm '$plist_file'"
+    fi
+    
+    echo
+    colored_message "$GREEN" "✅ GDoctor uninstallation completed!"
+    colored_message "$BLUE" "Configuration and data files have been removed."
+    colored_message "$BLUE" "Your git configuration remains unchanged."
+    
+    log_message "INFO" "GDoctor uninstallation completed"
+}
+
+# Function to start daemon mode
+start_daemon() {
+    colored_message "$BLUE" "Starting GDoctor daemon..."
+    colored_message "$YELLOW" "This is experimental. Use Ctrl+C to stop."
+    
+    log_message "INFO" "Daemon started"
+    
+    local last_dir=""
+    while true; do
+        current_dir=$(pwd)
+        if [[ "$current_dir" != "$last_dir" ]]; then
+            auto_switch_profile
+            last_dir="$current_dir"
+        fi
+        sleep 2
+    done
+}
+
+# Function to show service status
+show_status() {
+    colored_message "$BLUE" "GDoctor Service Status:"
+    echo
+    
+    # Check if config files exist
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo "✓ Profiles configured"
+    else
+        echo "✗ Profiles not initialized"
+    fi
+    
+    if [[ -f "$CURRENT_PROFILE_FILE" ]]; then
+        local current_profile
+        current_profile=$(cat "$CURRENT_PROFILE_FILE")
+        echo "✓ Active profile: $current_profile"
+    else
+        echo "✗ No active profile"
+    fi
+    
+    # Check shell integration
+    local shell_rc=""
+    if [[ "$SHELL" == *"zsh"* ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]]; then
+        shell_rc="$HOME/.bashrc"
+    fi
+    
+    if [[ -n "$shell_rc" ]] && grep -q "gdoctor_auto_switch" "$shell_rc" 2>/dev/null; then
+        echo "✓ Shell integration installed"
+    else
+        echo "✗ Shell integration not installed"
+    fi
+    
+    # Check if in git repository
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "✓ In git repository"
+        local git_dir
+        git_dir=$(git rev-parse --git-dir)
+        if [[ -f "$git_dir/hooks/pre-commit" ]] && grep -q "GDoctor" "$git_dir/hooks/pre-commit" 2>/dev/null; then
+            echo "✓ Git hooks installed"
+        else
+            echo "✗ Git hooks not installed"
+        fi
+    else
+        echo "- Not in git repository"
+    fi
+}
+
+# Include validation functions from original script
+validate_url() {
+    local url="$1"
+    
+    if [[ ! -f "$CURRENT_PROFILE_FILE" ]]; then
+        colored_message "$RED" "Error: No profile is currently selected."
+        colored_message "$YELLOW" "Use 'gdoctor --switch <profile>' to set one."
+        exit 1
+    fi
+
+    local current_profile
+    current_profile=$(cat "$CURRENT_PROFILE_FILE")
+    
+    if [[ -z "$current_profile" ]]; then
+        colored_message "$RED" "Error: Current profile file is empty."
+        exit 1
+    fi
+    
+    check_config_file
+
+    # Verify profile exists
+    if ! grep -q "^\[$current_profile\]$" "$CONFIG_FILE"; then
+        colored_message "$RED" "Error: Current profile '$current_profile' not found in $CONFIG_FILE."
+        exit 1
+    fi
+
+    # Find the correct profile for this repository
+    local correct_profile=""
+    local profiles
+    profiles=$(grep "^\[" "$CONFIG_FILE" | sed 's/[][]//g')
+    
+    if [[ -n "$profiles" ]]; then
+        while IFS= read -r profile; do
+            local server
+            server=$(get_profile_value "$profile" "server")
+            if [[ -n "$server" && "$url" == *"$server"* ]]; then
+                correct_profile="$profile"
+                break
+            fi
+        done <<< "$profiles"
+    fi
+
+    # Check if current profile matches the repository
+    local current_server
+    current_server=$(get_profile_value "$current_profile" "server")
+    
+    if [[ -z "$current_server" ]]; then
+        colored_message "$YELLOW" "Warning: No server configured for current profile '$current_profile'."
+        colored_message "$YELLOW" "Cannot validate profile without server configuration."
+        if [[ -n "$correct_profile" ]]; then
+            colored_message "$BLUE" "  Repository URL: $url"
+            colored_message "$BLUE" "  Suggested profile: $correct_profile"
+        fi
+        exit 0
+    fi
+
+    # Check if current profile is correct for this repository
+    if [[ "$url" == *"$current_server"* ]]; then
+        colored_message "$GREEN" "✓ Correct profile is active!"
+        colored_message "$GREEN" "  Repository URL: $url"
+        colored_message "$GREEN" "  Current profile: $current_profile"
+        colored_message "$GREEN" "  Server: $current_server"
+    else
+        colored_message "$RED" "✗ Wrong profile for this repository!"
+        colored_message "$RED" "  Repository URL: $url"
+        colored_message "$RED" "  Current profile: $current_profile"
+        colored_message "$RED" "  Current server: $current_server"
+        
+        if [[ -n "$correct_profile" ]]; then
+            local correct_server
+            correct_server=$(get_profile_value "$correct_profile" "server")
+            colored_message "$YELLOW" "  Expected profile: $correct_profile"
+            colored_message "$YELLOW" "  Expected server: $correct_server"
+            colored_message "$BLUE" "  Run: gdoctor --switch $correct_profile"
+        else
+            colored_message "$YELLOW" "  No matching profile found for this repository"
+            colored_message "$YELLOW" "  Consider adding a profile for this server"
+        fi
+        exit 1
+    fi
+}
+
+validate_current_repo() {
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        colored_message "$RED" "Error: Not in a git repository."
+        colored_message "$YELLOW" "Run this command from within a git repository, or provide a URL:"
+        colored_message "$YELLOW" "Usage: gdoctor --validate <url>"
+        exit 1
+    fi
+
+    # Get remote URLs
+    local remotes
+    remotes=$(git remote -v 2>/dev/null | grep -E "(fetch|push)" | head -1)
+    
+    if [[ -z "$remotes" ]]; then
+        colored_message "$RED" "Error: No remote repositories found."
+        colored_message "$YELLOW" "This repository doesn't have any remote origins configured."
+        exit 1
+    fi
+
+    # Extract URL from remote output
+    local remote_url
+    remote_url=$(echo "$remotes" | awk '{print $2}')
+    
+    if [[ -z "$remote_url" ]]; then
+        colored_message "$RED" "Error: Could not extract remote URL."
+        exit 1
+    fi
+
+    colored_message "$BLUE" "Detected repository URL: $remote_url"
+    echo
+    
+    # Validate the detected URL
+    validate_url "$remote_url"
+}
+
+# Main execution logic
+main() {
+    if [[ $# -eq 0 ]]; then
+        colored_message "$RED" "Error: No command provided."
+        echo
+        show_help
+        exit 1
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        local command="$1"
+        shift
+
+        case "$command" in
+            --current|current)
+                show_current_profile
+                ;;
+            --help|-h|help)
+                show_help
+                ;;
+            --init|init)
+                init_profiles
+                ;;
+            --list|list)
+                list_profiles
+                ;;
+            --listall|listall)
+                colored_message "$BLUE" "All Git configuration settings:"
+                git config --list
+                ;;
+            --switch|switch)
+                if [[ $# -lt 1 ]]; then
+                    colored_message "$RED" "Error: switch requires a profile name."
+                    colored_message "$YELLOW" "Usage: gdoctor switch <profile>"
+                    exit 1
+                fi
+                switch_profile "$1"
+                shift
+                ;;
+            --validate|validate)
+                if [[ $# -lt 1 ]]; then
+                    validate_current_repo
+                else
+                    validate_url "$1"
+                    shift
+                fi
+                ;;
+            version)
+                show_version
+                ;;
+            uninstall)
+                uninstall_gdoctor
+                ;;
+            --auto-switch)
+                auto_switch_profile
+                ;;
+            --install-hooks)
+                install_git_hooks
+                ;;
+            --uninstall-hooks)
+                uninstall_git_hooks
+                ;;
+            --install-shell)
+                install_shell_integration
+                ;;
+            --uninstall-shell)
+                uninstall_shell_integration
+                ;;
+            --daemon)
+                start_daemon
+                ;;
+            --status)
+                show_status
+                ;;
+            *)
+                colored_message "$RED" "Error: Unknown command '$command'"
+                echo
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Run main function with all arguments
+main "$@"

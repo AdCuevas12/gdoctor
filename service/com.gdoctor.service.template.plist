@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gdoctor.service</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>USER_HOME_PLACEHOLDER/.local/bin/gdoctor</string>
+        <string>--daemon</string>
+    </array>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <false/>
+    
+    <key>StartInterval</key>
+    <integer>30</integer>
+    
+    <key>StandardOutPath</key>
+    <string>USER_HOME_PLACEHOLDER/.gdoctor.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>USER_HOME_PLACEHOLDER/.gdoctor.error.log</string>
+    
+    <key>WorkingDirectory</key>
+    <string>USER_HOME_PLACEHOLDER</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>USER_HOME_PLACEHOLDER</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:USER_HOME_PLACEHOLDER/.local/bin</string>
+        <key>SHELL</key>
+        <string>SHELL_PLACEHOLDER</string>
+        <key>USER</key>
+        <string>USERNAME_PLACEHOLDER</string>
+    </dict>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    
+    <key>Nice</key>
+    <integer>1</integer>
+</dict>
+</plist>
