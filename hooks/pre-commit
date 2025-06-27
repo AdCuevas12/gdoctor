@@ -1,0 +1,10 @@
+#!/bin/bash
+# GDoctor pre-commit hook - Validate git profile
+
+if command -v gdoctor &> /dev/null; then
+    if ! gdoctor --validate; then
+        echo "❌ Git profile validation failed!"
+        echo "Use 'gdoctor --auto-switch' to fix this, or switch manually."
+        exit 1
+    fi
+fi

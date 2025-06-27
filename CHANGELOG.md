@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - 2025-06-27
+
+### 🎉 Git Hooks Enabled by Default
+
+### Added
+- **🪝 Default Git Hooks**
+  - Git hooks are now **enabled by default** during installation
+  - Global git template directory automatically configured (`~/.git-templates`)
+  - All new repositories automatically include profile validation hooks
+  - Zero configuration required - works out of the box
+
+- **🔧 Enhanced Hook Management**
+  - New `--setup-global-hooks` command to configure global template
+  - New `--enable-hooks` command to enable hooks in current repository
+  - New `--disable-hooks` command to disable hooks in current repository
+  - Enhanced `--auto-switch` to automatically install missing hooks
+  - Organized hooks in dedicated `hooks/` directory with templates
+
+- **⚙️ Installation Customization**
+  - Added `--disable-hooks` option to `setup.sh` and `install.sh`
+  - Users can opt-out of automatic hooks during installation
+  - Updated installation messages and help text
+
+### Changed
+- **🔄 Default Behavior**
+  - **BREAKING**: Git hooks are now enabled by default (previously optional)
+  - Installation process automatically sets up global git template
+  - All new `git init` and `git clone` operations include hooks automatically
+  - Users must explicitly use `--disable-hooks` to opt-out
+
+- **📁 Better Organization**
+  - Created dedicated `hooks/` directory with template files
+  - Added `hooks/README.md` with comprehensive documentation
+  - Hook templates are now file-based rather than inline
+
+### Enhanced
+- **🧪 Updated Tests**
+  - Test suite now expects hooks to be enabled by default
+  - Added tests for new hook management commands
+  - Enhanced test coverage for global template functionality
+
+- **📖 Updated Documentation**
+  - README now highlights hooks-by-default behavior
+  - Updated installation instructions and examples
+  - Added new section specifically for git hooks management
+
 ## [2.1.0] - 2025-06-27
 
 ### 🚀 Enhanced Commands & Uninstallation

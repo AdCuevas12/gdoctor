@@ -21,6 +21,22 @@ echo "🩺 GDoctor - Quick Setup"
 echo "========================"
 echo
 
+# Parse command line arguments
+DISABLE_HOOKS=false
+for arg in "$@"; do
+    case $arg in
+        --disable-hooks)
+            DISABLE_HOOKS=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--disable-hooks]"
+            echo "  --disable-hooks    Skip automatic git hooks setup"
+            exit 0
+            ;;
+    esac
+done
+
 # Check if we're in the right directory
 if [[ ! -f "bin/gdoctor" ]]; then
     colored_message "$RED" "Error: Please run this script from the gdoctor directory"
@@ -38,7 +54,13 @@ echo
 
 # Run the installer
 if [[ -f "scripts/install.sh" ]]; then
-    ./scripts/install.sh
+    if [[ "$DISABLE_HOOKS" == "true" ]]; then
+        colored_message "$YELLOW" "Installing with hooks disabled..."
+        ./scripts/install.sh --disable-hooks
+    else
+        colored_message "$BLUE" "Installing with hooks enabled by default..."
+        ./scripts/install.sh
+    fi
 else
     colored_message "$RED" "Error: scripts/install.sh not found"
     exit 1
@@ -57,6 +79,12 @@ echo
 colored_message "$YELLOW" "Next steps:"
 echo "1. Edit ~/.gitprofiles to add your profiles"
 echo "2. Enable shell integration: ./bin/gdoctor --install-shell"
-echo "3. Install git hooks: ./bin/gdoctor --install-hooks"
+if [[ "$DISABLE_HOOKS" == "true" ]]; then
+    echo "3. Git hooks were disabled. Use 'gdoctor --enable-hooks' to enable per repo"
+else
+    echo "3. Git hooks are now enabled by default! 🎉"
+    echo "   - Use 'gdoctor --disable-hooks' to disable in specific repos"
+    echo "   - Use 'gdoctor --enable-hooks' to re-enable if needed"
+fi
 echo
 colored_message "$GREEN" "Happy profile switching! 🚀"

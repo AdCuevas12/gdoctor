@@ -23,10 +23,12 @@ The definitive tool for managing multiple Git profiles with automatic switching,
 - Shell integration with bash/zsh
 - Directory-based profile detection
 
-### 🪝 **Git Hook Validation**
-- Pre-commit profile validation
-- Prevents commits with wrong profiles
-- Repository-specific hook installation
+### 🪝 **Git Hook Validation (Enabled by Default!)**
+- **Automatic hooks**: Enabled by default for all new repositories
+- **Global template**: Sets up git template directory automatically  
+- **Pre-commit validation**: Prevents commits with wrong profiles
+- **Per-repository control**: Disable/enable hooks as needed
+- **Zero configuration**: Works out of the box after installation
 
 ### 🔧 **Service Integration**
 - macOS LaunchAgent support
@@ -49,21 +51,25 @@ The definitive tool for managing multiple Git profiles with automatic switching,
 
 ## 🛠️ Installation
 
-### Option 1: Quick Setup
+### Option 1: Quick Setup (Recommended)
 ```bash
+# Default installation with hooks enabled
 ./setup.sh
+
+# Installation without automatic hooks
+./setup.sh --disable-hooks
 ```
 
 ### Option 2: Manual Installation
 ```bash
-# Install the service
+# Install with hooks enabled by default
 ./scripts/install.sh
+
+# Install without hooks
+./scripts/install.sh --disable-hooks
 
 # Enable auto-switching (recommended)
 ./bin/gdoctor --install-shell
-
-# Enable git hooks (optional)
-./bin/gdoctor --install-hooks
 ```
 
 ### Option 3: System Service
@@ -96,8 +102,33 @@ The definitive tool for managing multiple Git profiles with automatic switching,
 # Auto-switch for current directory
 ./bin/gdoctor --auto-switch
 
+# Git hooks management (enabled by default!)
+./bin/gdoctor --disable-hooks      # Disable in current repo
+./bin/gdoctor --enable-hooks       # Re-enable in current repo
+./bin/gdoctor --setup-global-hooks # Set up for all new repos
+
 # Complete uninstallation
 ./bin/gdoctor uninstall
+```
+
+## 🎉 Git Hooks (New Default Behavior!)
+
+**Git hooks are now enabled by default!** After installation, all new repositories automatically include profile validation hooks.
+
+```bash
+# This now automatically includes hooks:
+git init my-project
+cd my-project
+# Pre-commit hook is already active!
+
+# Disable hooks in specific repository
+gdoctor --disable-hooks
+
+# Re-enable hooks if needed
+gdoctor --enable-hooks
+
+# Set up global template manually (done automatically during install)
+gdoctor --setup-global-hooks
 ```
 
 ## 🔧 Configuration
@@ -151,11 +182,11 @@ server=github.com
 
 ## 📱 Platform Support
 
-| Platform | Auto-Switch | Git Hooks | System Service | Status |
-|----------|-------------|-----------|----------------|---------|
-| macOS    | ✅          | ✅        | ✅ (LaunchAgent) | Full Support |
-| Linux    | ✅          | ✅        | ✅ (systemd)     | Full Support |
-| Windows  | ✅          | ✅        | ⚠️ (Manual)      | Basic Support |
+| Platform | Auto-Switch | Git Hooks | Global Template | System Service | Status |
+|----------|-------------|-----------|-----------------|----------------|---------|
+| macOS    | ✅          | ✅ (Default) | ✅              | ✅ (LaunchAgent) | Full Support |
+| Linux    | ✅          | ✅ (Default) | ✅              | ✅ (systemd)     | Full Support |
+| Windows  | ✅          | ✅ (Default) | ✅              | ⚠️ (Manual)      | Basic Support |
 
 ## 🤝 Contributing
 
@@ -174,9 +205,17 @@ MIT License - See original GDoctor project for details.
 - **Documentation**: [docs/README.md](docs/README.md)
 - **Examples**: [docs/EXAMPLES.md](docs/EXAMPLES.md)
 - **Changelog**: [CHANGELOG.md](CHANGELOG.md)
+- **Hook Templates**: [hooks/README.md](hooks/README.md)
 - **Issues**: Create GitHub issues for bugs/features
 - **Logs**: Check `~/.gdoctor.log` for troubleshooting
 
+## 🎯 What's New in v2.2.0
+
+- **🎉 Git hooks enabled by default** - Zero configuration required!
+- **🔧 Enhanced hook management** - `--enable-hooks`, `--disable-hooks`, `--setup-global-hooks`
+- **📁 Better organization** - Dedicated `hooks/` directory with templates
+- **⚙️ Installation customization** - Use `--disable-hooks` to opt-out
+
 ---
 
-**Transform your git workflow with intelligent profile management! 🎯**
+**Transform your git workflow with intelligent profile management and automatic validation! 🎯✨**
