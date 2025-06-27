@@ -17,6 +17,22 @@ colored_message() {
     echo -e "${color}${message}${NC}"
 }
 
+# Parse command line arguments
+DISABLE_HOOKS=false
+for arg in "$@"; do
+    case $arg in
+        --disable-hooks)
+            DISABLE_HOOKS=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--disable-hooks]"
+            echo "  --disable-hooks    Skip automatic git hooks setup"
+            exit 0
+            ;;
+    esac
+done
+
 echo "🚀 Installing GDoctor Service..."
 echo
 
@@ -74,7 +90,7 @@ fi
 
 # Offer to enable features
 echo
-colored_message "$BLUE" "Optional: Enable automatic features"
+colored_message "$BLUE" "Setting up automatic features..."
 
 read -p "Enable shell integration for auto-switching? (y/N): " -n 1 -r
 echo
@@ -82,12 +98,27 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     ./bin/gdoctor --install-shell
 fi
 
-# Check if in git repo for hooks
+# Set up global git hooks by default (unless disabled)
+if [[ "$DISABLE_HOOKS" == "false" ]]; then
+    colored_message "$BLUE" "Setting up automatic git hooks for all repositories..."
+    ./bin/gdoctor --setup-global-hooks
+    colored_message "$GREEN" "✓ Git hooks enabled by default for all new repositories"
+    colored_message "$YELLOW" "  Use 'gdoctor --disable-hooks' in specific repos to disable"
+else
+    colored_message "$YELLOW" "Git hooks setup skipped (--disable-hooks flag used)"
+fi
+
+# Check if in git repo for immediate hooks installation
 if git rev-parse --git-dir >/dev/null 2>&1; then
-    read -p "Install git hooks in current repository? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ "$DISABLE_HOOKS" == "false" ]]; then
+        colored_message "$BLUE" "Installing hooks in current repository..."
         ./bin/gdoctor --install-hooks
+    else
+        read -p "Install git hooks in current repository? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            ./bin/gdoctor --install-hooks
+        fi
     fi
 fi
 
@@ -98,6 +129,13 @@ colored_message "$BLUE" "Next steps:"
 echo "1. Edit ~/.gitprofiles to add your profiles"
 echo "2. Use 'gdoctor --status' to check setup"
 echo "3. Use 'gdoctor --help' for all commands"
+if [[ "$DISABLE_HOOKS" == "false" ]]; then
+    echo "4. Git hooks are enabled by default for all new repositories! 🎉"
+    echo "   - Use 'gdoctor --disable-hooks' to disable in specific repos"
+    echo "   - Use 'gdoctor --enable-hooks' to re-enable if needed"
+else
+    echo "4. Git hooks were disabled - use 'gdoctor --enable-hooks' to enable per repo"
+fi
 echo
 colored_message "$YELLOW" "If you enabled shell integration, restart your shell or run:"
 echo "source ~/.bashrc  # or ~/.zshrc"

@@ -75,8 +75,11 @@ BASIC COMMANDS:
     uninstall           Complete uninstallation of gdoctor
 
 SERVICE COMMANDS:
+    --setup-global-hooks  Set up automatic git hooks for all new repositories
     --install-hooks       Install git hooks for automatic validation
     --uninstall-hooks     Remove git hooks
+    --enable-hooks        Enable git hooks in current repository
+    --disable-hooks       Disable git hooks in current repository
     --install-shell       Install shell integration for auto-switching
     --uninstall-shell     Remove shell integration
     --daemon              Run as background service
@@ -353,6 +356,18 @@ auto_switch_profile() {
             log_message "INFO" "Auto-switched to profile $correct_profile for repository $remote_url"
         fi
     fi
+    
+    # Auto-install hooks if missing (and global template is set up)
+    if git config --global --get init.templateDir >/dev/null 2>&1; then
+        local git_dir
+        git_dir=$(git rev-parse --git-dir)
+        local hooks_dir="$git_dir/hooks"
+        
+        if [[ ! -f "$hooks_dir/pre-commit" ]] || [[ ! -x "$hooks_dir/pre-commit" ]]; then
+            # Silently install hooks if they're missing
+            install_git_hooks >/dev/null 2>&1 || true
+        fi
+    fi
 }
 
 # Function to install git hooks
@@ -412,78 +427,96 @@ uninstall_git_hooks() {
     fi
 }
 
-# Function to install shell integration
-install_shell_integration() {
-    local shell_rc=""
+# Function to set up global git hooks template
+setup_global_hooks() {
+    local template_dir="$HOME/.git-templates"
+    local hooks_dir="$template_dir/hooks"
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local source_hook="$script_dir/hooks/pre-commit"
     
-    # Detect shell and set rc file
-    if [[ "$SHELL" == *"zsh"* ]]; then
-        shell_rc="$HOME/.zshrc"
-    elif [[ "$SHELL" == *"bash"* ]]; then
-        shell_rc="$HOME/.bashrc"
+    colored_message "$BLUE" "Setting up global git hooks template..."
+    
+    # Create template directory
+    mkdir -p "$hooks_dir"
+    
+    # Copy the pre-commit hook template if it exists, otherwise create inline
+    if [[ -f "$source_hook" ]]; then
+        cp "$source_hook" "$hooks_dir/pre-commit"
     else
-        colored_message "$YELLOW" "Unknown shell. Please manually add the integration."
-        colored_message "$YELLOW" "Add this to your shell profile:"
-        echo
-        echo "# GDoctor auto-switch integration"
-        echo "gdoctor_auto_switch() {"
-        echo "    if command -v gdoctor &> /dev/null; then"
-        echo "        gdoctor --auto-switch"
-        echo "    fi"
-        echo "}"
-        echo "export PROMPT_COMMAND=\"gdoctor_auto_switch; \$PROMPT_COMMAND\""
-        return 0
+        # Fallback: create hook inline
+        cat > "$hooks_dir/pre-commit" << 'EOF'
+#!/bin/bash
+# GDoctor pre-commit hook - Validate git profile
+
+if command -v gdoctor &> /dev/null; then
+    if ! gdoctor --validate; then
+        echo "❌ Git profile validation failed!"
+        echo "Use 'gdoctor --auto-switch' to fix this, or switch manually."
+        exit 1
     fi
-
-    # Check if already installed
-    if grep -q "gdoctor_auto_switch" "$shell_rc" 2>/dev/null; then
-        colored_message "$YELLOW" "Shell integration already installed in $shell_rc"
-        return 0
-    fi
-
-    # Add integration
-    cat >> "$shell_rc" << 'EOF'
-
-# GDoctor auto-switch integration
-gdoctor_auto_switch() {
-    if command -v gdoctor &> /dev/null; then
-        gdoctor --auto-switch 2>/dev/null
-    fi
-}
-
-# Hook into directory changes (works for both bash and zsh)
-if [[ "$SHELL" == *"zsh"* ]]; then
-    chpwd_functions+=(gdoctor_auto_switch)
-else
-    export PROMPT_COMMAND="gdoctor_auto_switch; $PROMPT_COMMAND"
 fi
 EOF
-
-    colored_message "$GREEN" "✓ Shell integration installed in $shell_rc"
-    colored_message "$YELLOW" "Restart your shell or run: source $shell_rc"
-    log_message "INFO" "Shell integration installed"
+    fi
+    
+    # Make hook executable
+    chmod +x "$hooks_dir/pre-commit"
+    
+    # Set global template directory
+    git config --global init.templateDir "$template_dir"
+    
+    colored_message "$GREEN" "✓ Global git hooks template configured!"
+    colored_message "$GREEN" "  All new repositories will automatically have git hooks enabled"
+    colored_message "$YELLOW" "  Use 'gdoctor --disable-hooks' in specific repos to disable"
+    
+    log_message "INFO" "Global git hooks template set up at $template_dir"
 }
 
-# Function to uninstall shell integration
-uninstall_shell_integration() {
-    local shell_rc=""
-    
-    if [[ "$SHELL" == *"zsh"* ]]; then
-        shell_rc="$HOME/.zshrc"
-    elif [[ "$SHELL" == *"bash"* ]]; then
-        shell_rc="$HOME/.bashrc"
-    else
-        colored_message "$YELLOW" "Unknown shell. Please manually remove the integration."
-        return 0
+# Function to enable hooks in current repository
+enable_hooks() {
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        colored_message "$RED" "Error: Not in a git repository."
+        exit 1
     fi
 
-    if [[ -f "$shell_rc" ]]; then
-        # Remove our integration block
-        sed -i.bak '/# GDoctor auto-switch integration/,/^$/d' "$shell_rc"
-        colored_message "$GREEN" "✓ Shell integration removed from $shell_rc"
-        colored_message "$YELLOW" "Restart your shell to complete removal"
+    local git_dir
+    git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+    
+    # Check if hook already exists and is executable
+    if [[ -f "$hooks_dir/pre-commit" ]] && [[ -x "$hooks_dir/pre-commit" ]]; then
+        if grep -q "GDoctor pre-commit hook" "$hooks_dir/pre-commit" 2>/dev/null; then
+            colored_message "$YELLOW" "Git hooks are already enabled in this repository"
+            return
+        fi
+    fi
+    
+    # Install or re-enable hooks
+    install_git_hooks
+}
+
+# Function to disable hooks in current repository
+disable_hooks() {
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        colored_message "$RED" "Error: Not in a git repository."
+        exit 1
+    fi
+
+    local git_dir
+    git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+    
+    if [[ -f "$hooks_dir/pre-commit" ]]; then
+        if grep -q "GDoctor pre-commit hook" "$hooks_dir/pre-commit" 2>/dev/null; then
+            # Remove executable permission to disable
+            chmod -x "$hooks_dir/pre-commit"
+            colored_message "$GREEN" "✓ Git hooks disabled in current repository"
+            colored_message "$YELLOW" "  Use 'gdoctor --enable-hooks' to re-enable"
+        else
+            colored_message "$YELLOW" "Warning: pre-commit hook exists but is not from GDoctor"
+            colored_message "$YELLOW" "Cannot disable non-GDoctor hooks"
+        fi
     else
-        colored_message "$YELLOW" "No shell integration found"
+        colored_message "$YELLOW" "No git hooks found in current repository"
     fi
 }
 
@@ -838,11 +871,20 @@ main() {
             --auto-switch)
                 auto_switch_profile
                 ;;
+            --setup-global-hooks)
+                setup_global_hooks
+                ;;
             --install-hooks)
                 install_git_hooks
                 ;;
             --uninstall-hooks)
                 uninstall_git_hooks
+                ;;
+            --enable-hooks)
+                enable_hooks
+                ;;
+            --disable-hooks)
+                disable_hooks
                 ;;
             --install-shell)
                 install_shell_integration
