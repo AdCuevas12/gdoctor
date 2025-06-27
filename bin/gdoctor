@@ -6,7 +6,7 @@
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
 # Version
-readonly VERSION="2.1.0"
+readonly VERSION="2.2.0"
 readonly BUILD_DATE="2025-06-27"
 
 # Configuration
@@ -76,12 +76,10 @@ BASIC COMMANDS:
 
 SERVICE COMMANDS:
     --setup-global-hooks  Set up automatic git hooks for all new repositories
-    --install-hooks       Install git hooks for automatic validation
-    --uninstall-hooks     Remove git hooks
     --enable-hooks        Enable git hooks in current repository
     --disable-hooks       Disable git hooks in current repository
-    --install-shell       Install shell integration for auto-switching
-    --uninstall-shell     Remove shell integration
+    --enable-shell        Enable shell integration for auto-switching
+    --disable-shell       Disable shell integration
     --daemon              Run as background service
     --stop-daemon         Stop background service
     --auto-switch         Auto-switch profile based on current directory
@@ -89,8 +87,8 @@ SERVICE COMMANDS:
 
 EXAMPLES:
     gdoctor init                      # Initialize profiles
-    gdoctor --install-shell           # Enable automatic profile switching
-    gdoctor --install-hooks           # Enable git hook validation
+    gdoctor --enable-shell            # Enable automatic profile switching
+    gdoctor --enable-hooks            # Enable git hook validation
     gdoctor --daemon                  # Run as background service
     gdoctor --auto-switch             # Auto-switch for current directory
     gdoctor uninstall                 # Complete uninstallation
@@ -549,12 +547,18 @@ uninstall_gdoctor() {
     
     # Remove shell integration
     colored_message "$BLUE" "Removing shell integration..."
-    uninstall_shell_integration 2>/dev/null || true
+    disable_shell_integration 2>/dev/null || true
     
     # Remove git hooks from current repository if we're in one
     if git rev-parse --git-dir >/dev/null 2>&1; then
         colored_message "$BLUE" "Removing git hooks from current repository..."
-        uninstall_git_hooks 2>/dev/null || true
+        # For uninstall, completely remove the hook file
+        local git_dir
+        git_dir=$(git rev-parse --git-dir)
+        local hooks_dir="$git_dir/hooks"
+        if [[ -f "$hooks_dir/pre-commit" ]] && grep -q "GDoctor pre-commit hook" "$hooks_dir/pre-commit" 2>/dev/null; then
+            rm "$hooks_dir/pre-commit" 2>/dev/null || true
+        fi
     fi
     
     # Remove configuration files
@@ -678,9 +682,9 @@ show_status() {
     fi
     
     if [[ -n "$shell_rc" ]] && grep -q "gdoctor_auto_switch" "$shell_rc" 2>/dev/null; then
-        echo "✓ Shell integration installed"
+        echo "✓ Shell integration enabled"
     else
-        echo "✗ Shell integration not installed"
+        echo "✗ Shell integration not enabled"
     fi
     
     # Check if in git repository
@@ -815,6 +819,95 @@ validate_current_repo() {
     validate_url "$remote_url"
 }
 
+# Function to enable shell integration
+enable_shell_integration() {
+    local shell_rc=""
+    
+    # Detect shell and set rc file
+    if [[ "$SHELL" == *"zsh"* ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]]; then
+        shell_rc="$HOME/.bashrc"
+    else
+        colored_message "$YELLOW" "Warning: Shell not detected or supported"
+        colored_message "$YELLOW" "Please add manual integration to your shell rc file"
+        return 1
+    fi
+    
+    # Check if already installed
+    if grep -q "gdoctor_auto_switch" "$shell_rc" 2>/dev/null; then
+        colored_message "$YELLOW" "Shell integration already enabled"
+        return 0
+    fi
+    
+    colored_message "$BLUE" "Enabling shell integration for $SHELL..."
+    
+    # Add shell integration
+    cat >> "$shell_rc" << 'EOF'
+
+# GDoctor - Auto-switch git profiles
+gdoctor_auto_switch() {
+    if command -v gdoctor &> /dev/null; then
+        gdoctor --auto-switch 2>/dev/null || true
+    fi
+}
+
+# Call auto-switch when changing directories
+if [[ "$SHELL" == *"zsh"* ]]; then
+    autoload -U add-zsh-hook
+    add-zsh-hook chpwd gdoctor_auto_switch
+elif [[ "$SHELL" == *"bash"* ]]; then
+    PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}gdoctor_auto_switch"
+fi
+
+# Call auto-switch for current directory
+gdoctor_auto_switch
+EOF
+    
+    colored_message "$GREEN" "✓ Shell integration enabled successfully!"
+    colored_message "$GREEN" "  Auto-switching enabled for $SHELL"
+    colored_message "$YELLOW" "  Restart your shell or run: source $shell_rc"
+    
+    log_message "INFO" "Shell integration enabled for $SHELL"
+}
+
+# Function to disable shell integration
+disable_shell_integration() {
+    local shell_rc=""
+    
+    # Detect shell and set rc file
+    if [[ "$SHELL" == *"zsh"* ]]; then
+        shell_rc="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]]; then
+        shell_rc="$HOME/.bashrc"
+    else
+        colored_message "$YELLOW" "Warning: Shell not detected or supported"
+        return 1
+    fi
+    
+    # Check if installed
+    if ! grep -q "gdoctor_auto_switch" "$shell_rc" 2>/dev/null; then
+        colored_message "$YELLOW" "Shell integration not enabled"
+        return 0
+    fi
+    
+    colored_message "$BLUE" "Disabling shell integration for $SHELL..."
+    
+    # Create temporary file without GDoctor integration
+    if [[ -f "$shell_rc" ]]; then
+        # Remove GDoctor section
+        sed '/# GDoctor - Auto-switch git profiles/,/^gdoctor_auto_switch$/d' "$shell_rc" > "${shell_rc}.tmp"
+        mv "${shell_rc}.tmp" "$shell_rc"
+        
+        colored_message "$GREEN" "✓ Shell integration disabled successfully!"
+        colored_message "$YELLOW" "  Restart your shell or run: source $shell_rc"
+    else
+        colored_message "$YELLOW" "Shell rc file not found: $shell_rc"
+    fi
+    
+    log_message "INFO" "Shell integration disabled for $SHELL"
+}
+
 # Main execution logic
 main() {
     if [[ $# -eq 0 ]]; then
@@ -874,23 +967,17 @@ main() {
             --setup-global-hooks)
                 setup_global_hooks
                 ;;
-            --install-hooks)
-                install_git_hooks
-                ;;
-            --uninstall-hooks)
-                uninstall_git_hooks
-                ;;
             --enable-hooks)
                 enable_hooks
                 ;;
             --disable-hooks)
                 disable_hooks
                 ;;
-            --install-shell)
-                install_shell_integration
+            --enable-shell)
+                enable_shell_integration
                 ;;
-            --uninstall-shell)
-                uninstall_shell_integration
+            --disable-shell)
+                disable_shell_integration
                 ;;
             --daemon)
                 start_daemon

@@ -78,7 +78,7 @@ echo "  ./tests/test-service.sh                # Run tests"
 echo
 colored_message "$YELLOW" "Next steps:"
 echo "1. Edit ~/.gitprofiles to add your profiles"
-echo "2. Enable shell integration: ./bin/gdoctor --install-shell"
+echo "2. Enable shell integration: ./bin/gdoctor --enable-shell"
 if [[ "$DISABLE_HOOKS" == "true" ]]; then
     echo "3. Git hooks were disabled. Use 'gdoctor --enable-hooks' to enable per repo"
 else

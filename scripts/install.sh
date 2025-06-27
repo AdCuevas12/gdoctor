@@ -95,7 +95,7 @@ colored_message "$BLUE" "Setting up automatic features..."
 read -p "Enable shell integration for auto-switching? (y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    ./bin/gdoctor --install-shell
+    ./bin/gdoctor --enable-shell
 fi
 
 # Set up global git hooks by default (unless disabled)
